@@ -28,9 +28,34 @@ function getTodayInputValue() {
   return local.toISOString().slice(0, 10)
 }
 
-function createInitialPointForm() {
+function getTomorrowInputValue() {
+  const now = new Date()
+  now.setDate(now.getDate() + 1)
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000)
+  return local.toISOString().slice(0, 10)
+}
+
+function getCurrentMonthBounds() {
+  const now = new Date()
+  const year = now.getFullYear()
+  const month = now.getMonth()
+  const start = new Date(year, month, 1)
+  const end = new Date(year, month + 1, 0)
+  const startLocal = new Date(start.getTime() - start.getTimezoneOffset() * 60000)
+  const endLocal = new Date(end.getTime() - end.getTimezoneOffset() * 60000)
+
   return {
-    work_date: getTodayInputValue(),
+    min: startLocal.toISOString().slice(0, 10),
+    max: endLocal.toISOString().slice(0, 10),
+  }
+}
+
+function createInitialPointForm() {
+  const { min, max } = getCurrentMonthBounds()
+  const today = getTodayInputValue()
+
+  return {
+    work_date: today >= min && today <= max ? today : max,
     entry_time: '08:00',
     break_start: '12:00',
     break_end: '13:00',
@@ -47,7 +72,7 @@ function createInitialPointForm() {
 
 function createInitialRequestForm() {
   return {
-    request_date: getTodayInputValue(),
+    request_date: getTomorrowInputValue(),
     hours_requested: '8',
     reason: '',
   }
@@ -73,13 +98,6 @@ function formatDateInputBR(value) {
   return `${day}/${month}/${year}`
 }
 
-function maskDateInput(value) {
-  const digits = onlyDigits(value).slice(0, 8)
-  if (digits.length <= 2) return digits
-  if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`
-  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`
-}
-
 function parseDateInputBR(value) {
   const match = value.match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
   if (!match) return null
@@ -95,6 +113,13 @@ function parseDateInputBR(value) {
     date.getDate() === Number(day)
 
   return sameDate ? isoDate : null
+}
+
+function isDateWithinRange(value, min, max) {
+  if (!value) return false
+  if (min && value < min) return false
+  if (max && value > max) return false
+  return true
 }
 
 function minutesBetween(start, end) {
@@ -167,11 +192,40 @@ function filterRows(rows, { name = '', date = '' }, { getName, getDate }) {
   })
 }
 
+function useFeedback() {
+  const [feedback, setFeedback] = useState(null)
+
+  useEffect(() => {
+    if (!feedback) return undefined
+    const timeout = setTimeout(() => setFeedback(null), 4500)
+    return () => clearTimeout(timeout)
+  }, [feedback])
+
+  function showSuccess(message) {
+    setFeedback({ type: 'success', message })
+  }
+
+  function showError(message) {
+    setFeedback({ type: 'error', message })
+  }
+
+  function clearFeedback() {
+    setFeedback(null)
+  }
+
+  return { feedback, showSuccess, showError, clearFeedback }
+}
+
+function FeedbackMessage({ feedback }) {
+  if (!feedback) return null
+  return <p className={`msg ${feedback.type}`}>{feedback.message}</p>
+}
+
 function badge(status) {
   return <span className={`badge ${status}`}>{status}</span>
 }
 
-function DateFieldBR({ label, value, onChange }) {
+function DateFieldBR({ label, value, onChange, min, max }) {
   return (
     <label>
       {label}
@@ -179,6 +233,8 @@ function DateFieldBR({ label, value, onChange }) {
         type="date"
         lang="pt-BR"
         value={value || ''}
+        min={min}
+        max={max}
         onChange={(event) => onChange(event.target.value)}
       />
     </label>
@@ -285,21 +341,26 @@ function Auth() {
     password: '',
   })
   const [loading, setLoading] = useState(false)
-  const [msg, setMsg] = useState('')
+  const { feedback, showError, showSuccess, clearFeedback } = useFeedback()
 
   async function signUp() {
     if (!registerForm.full_name.trim()) {
-      setMsg('Informe o nome completo.')
+      showError('Informe o nome completo.')
       return
     }
 
     if (onlyDigits(registerForm.phone).length < 10) {
-      setMsg('Informe um telefone valido com DDD.')
+      showError('Informe um telefone valido com DDD.')
+      return
+    }
+
+    if (!registerForm.email.trim() || !registerForm.password.trim()) {
+      showError('Preencha e-mail e senha para realizar o cadastro.')
       return
     }
 
     setLoading(true)
-    setMsg('')
+    clearFeedback()
 
     const { error } = await supabase.auth.signUp({
       email: registerForm.email,
@@ -312,24 +373,43 @@ function Auth() {
       },
     })
 
-    setMsg(
-      error
-        ? error.message
-        : 'Cadastro realizado. Se a confirmacao de e-mail estiver desativada, faca login normalmente.',
-    )
+    if (error) {
+      showError(error.message)
+    } else {
+      showSuccess('Cadastro realizado com sucesso. Agora voce ja pode entrar com seu e-mail e senha.')
+      setMode('login')
+      setLoginForm({ email: registerForm.email, password: '' })
+      setRegisterForm({
+        full_name: '',
+        phone: '',
+        email: '',
+        password: '',
+      })
+    }
+
     setLoading(false)
   }
 
   async function login() {
+    if (!loginForm.email.trim() || !loginForm.password.trim()) {
+      showError('Informe e-mail e senha para entrar.')
+      return
+    }
+
     setLoading(true)
-    setMsg('')
+    clearFeedback()
 
     const { error } = await supabase.auth.signInWithPassword({
       email: loginForm.email,
       password: loginForm.password,
     })
 
-    setMsg(error ? error.message : '')
+    if (error) {
+      showError(error.message)
+    } else {
+      showSuccess('Login realizado com sucesso.')
+    }
+
     setLoading(false)
   }
 
@@ -344,7 +424,7 @@ function Auth() {
             className={mode === 'login' ? 'active' : 'secondary'}
             onClick={() => {
               setMode('login')
-              setMsg('')
+              clearFeedback()
             }}
           >
             Entrar
@@ -354,7 +434,7 @@ function Auth() {
             className={mode === 'register' ? 'active' : 'secondary'}
             onClick={() => {
               setMode('register')
-              setMsg('')
+              clearFeedback()
             }}
           >
             Cadastrar
@@ -410,7 +490,7 @@ function Auth() {
           </div>
         )}
 
-        {msg && <p className="msg">{msg}</p>}
+        <FeedbackMessage feedback={feedback} />
       </section>
     </main>
   )
@@ -424,9 +504,12 @@ function Employee({ session, profile }) {
   const [req, setReq] = useState(createInitialRequestForm)
   const [entryFilters, setEntryFilters] = useState({ date: '' })
   const [requestFilters, setRequestFilters] = useState({ date: '' })
+  const { feedback, showError, showSuccess, clearFeedback } = useFeedback()
+  const currentMonthBounds = useMemo(() => getCurrentMonthBounds(), [])
+  const tomorrow = useMemo(() => getTomorrowInputValue(), [])
 
   async function load() {
-    const [{ data: entryData }, { data: requestData }] = await Promise.all([
+    const [{ data: entryData, error: entryError }, { data: requestData, error: requestError }] = await Promise.all([
       supabase
         .from('time_entries')
         .select('*')
@@ -438,6 +521,14 @@ function Employee({ session, profile }) {
         .eq('user_id', session.user.id)
         .order('created_at', { ascending: false }),
     ])
+
+    if (entryError) {
+      showError(`Nao foi possivel carregar o historico de jornada: ${entryError.message}`)
+    }
+
+    if (requestError) {
+      showError(`Nao foi possivel carregar as solicitacoes de folga: ${requestError.message}`)
+    }
 
     setEntries(entryData || [])
     setRequests(requestData || [])
@@ -467,13 +558,20 @@ function Employee({ session, profile }) {
   )
 
   async function savePoint() {
+    clearFeedback()
+
     if (!parseDateInputBR(formatDateInputBR(form.work_date))) {
-      alert('Informe uma data valida.')
+      showError('Informe uma data valida para o registro de ponto.')
+      return
+    }
+
+    if (!isDateWithinRange(form.work_date, currentMonthBounds.min, currentMonthBounds.max)) {
+      showError('O ponto so pode ser registrado dentro do mes atual.')
       return
     }
 
     if (form.is_absence && form.absence_reason === 'Outro' && !form.absence_other_reason.trim()) {
-      alert('Descreva o motivo da falta.')
+      showError('Descreva o motivo da falta.')
       return
     }
 
@@ -501,26 +599,39 @@ function Employee({ session, profile }) {
 
     const { error } = await supabase.from('time_entries').insert(payload)
     if (error) {
-      alert(error.message)
+      showError(`Nao foi possivel salvar o ponto: ${error.message}`)
     } else {
       setForm((current) => ({
         ...createInitialPointForm(),
         work_date: current.work_date,
       }))
       await load()
+      showSuccess('Ponto registrado com sucesso.')
     }
     setSaving(false)
   }
 
   async function saveRequest() {
+    clearFeedback()
+
+    if (!parseDateInputBR(formatDateInputBR(req.request_date))) {
+      showError('Informe uma data valida para a solicitacao de folga.')
+      return
+    }
+
+    if (!isDateWithinRange(req.request_date, tomorrow)) {
+      showError('A folga so pode ser solicitada para datas posteriores ao dia atual.')
+      return
+    }
+
     if (!req.reason.trim()) {
-      alert('Informe o motivo da solicitacao de folga.')
+      showError('Informe o motivo da solicitacao de folga.')
       return
     }
 
     const hoursRequested = Number(req.hours_requested)
     if (!hoursRequested || hoursRequested <= 0) {
-      alert('Informe uma quantidade de horas valida.')
+      showError('Informe uma quantidade de horas valida.')
       return
     }
 
@@ -533,10 +644,11 @@ function Employee({ session, profile }) {
     })
 
     if (error) {
-      alert(error.message)
+      showError(`Nao foi possivel enviar a solicitacao: ${error.message}`)
     } else {
       setReq(createInitialRequestForm())
       await load()
+      showSuccess('Solicitacao de folga enviada com sucesso.')
     }
     setSaving(false)
   }
@@ -562,6 +674,10 @@ function Employee({ session, profile }) {
         </div>
       </section>
 
+      <section className="wide">
+        <FeedbackMessage feedback={feedback} />
+      </section>
+
       <section className="card wide">
         <h2>
           <Clock /> Registrar jornada
@@ -570,7 +686,13 @@ function Employee({ session, profile }) {
           Datas no formato dd/mm/aaaa e horarios no formato brasileiro de 24 horas.
         </p>
         <div className="form-grid">
-          <DateFieldBR label="Data" value={form.work_date} onChange={(value) => setForm({ ...form, work_date: value })} />
+          <DateFieldBR
+            label="Data"
+            value={form.work_date}
+            min={currentMonthBounds.min}
+            max={currentMonthBounds.max}
+            onChange={(value) => setForm({ ...form, work_date: value })}
+          />
           <TimeFieldBR
             label="Entrada"
             disabled={form.is_absence}
@@ -693,6 +815,7 @@ function Employee({ session, profile }) {
         <DateFieldBR
           label="Data"
           value={req.request_date}
+          min={tomorrow}
           onChange={(value) => setReq({ ...req, request_date: value })}
         />
         <label>
@@ -772,6 +895,7 @@ function Admin({ currentUserId, currentRole }) {
   const [profileFilters, setProfileFilters] = useState({ name: '' })
   const [entryFilters, setEntryFilters] = useState({ name: '', date: '' })
   const [requestFilters, setRequestFilters] = useState({ name: '', date: '' })
+  const { feedback, showError, showSuccess } = useFeedback()
 
   async function load() {
     const [profileResponse, entryResponse, requestResponse] = await Promise.all([
@@ -784,6 +908,18 @@ function Admin({ currentUserId, currentRole }) {
         )
         .order('created_at', { ascending: false }),
     ])
+
+    if (profileResponse.error) {
+      showError(`Nao foi possivel carregar os perfis: ${profileResponse.error.message}`)
+    }
+
+    if (entryResponse.error) {
+      showError(`Nao foi possivel carregar as jornadas: ${entryResponse.error.message}`)
+    }
+
+    if (requestResponse.error) {
+      showError(`Nao foi possivel carregar as solicitacoes: ${requestResponse.error.message}`)
+    }
 
     setProfiles(profileResponse.data || [])
     setEntries(entryResponse.data || [])
@@ -847,7 +983,7 @@ function Admin({ currentUserId, currentRole }) {
   )
 
   async function decide(requestId, status) {
-    await supabase
+    const { error } = await supabase
       .from('day_off_requests')
       .update({
         status,
@@ -856,12 +992,25 @@ function Admin({ currentUserId, currentRole }) {
       })
       .eq('id', requestId)
 
-    load()
+    if (error) {
+      showError(`Nao foi possivel atualizar a solicitacao: ${error.message}`)
+      return
+    }
+
+    await load()
+    showSuccess(`Solicitacao ${status === 'aprovada' ? 'aprovada' : 'negada'} com sucesso.`)
   }
 
   async function updateProfile(profileId, field, value) {
-    await supabase.from('profiles').update({ [field]: value }).eq('id', profileId)
-    load()
+    const { error } = await supabase.from('profiles').update({ [field]: value }).eq('id', profileId)
+
+    if (error) {
+      showError(`Nao foi possivel atualizar o perfil: ${error.message}`)
+      return
+    }
+
+    await load()
+    showSuccess('Perfil atualizado com sucesso.')
   }
 
   return (
@@ -887,6 +1036,10 @@ function Admin({ currentUserId, currentRole }) {
           <b>Saldo geral</b>
           <strong>{fmtMin(generalBalance)}</strong>
         </div>
+      </section>
+
+      <section className="wide">
+        <FeedbackMessage feedback={feedback} />
       </section>
 
       <section className="card wide">
