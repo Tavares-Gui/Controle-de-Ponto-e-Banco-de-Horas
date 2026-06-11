@@ -160,6 +160,19 @@ main {
   border-left: 4px solid #2563eb;
   padding: 12px;
   border-radius: 8px;
+  margin-top: 16px;
+}
+
+.msg.success {
+  background: #dcfce7;
+  border-left-color: #16a34a;
+  color: #166534;
+}
+
+.msg.error {
+  background: #fee2e2;
+  border-left-color: #dc2626;
+  color: #991b1b;
 }
 
 .grid {
